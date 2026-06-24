@@ -1,0 +1,36 @@
+<svg width="600" height="900" viewBox="0 0 600 900" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="CineMate placeholder poster">
+  <defs>
+    <linearGradient id="bg" x1="80" y1="0" x2="520" y2="900" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#16051F"/>
+      <stop offset="0.48" stop-color="#32184A"/>
+      <stop offset="1" stop-color="#7A3FF2"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(300 430) rotate(90) scale(420 270)">
+      <stop stop-color="#FF5CDB" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#FF5CDB" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="24" stdDeviation="24" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <rect width="600" height="900" rx="42" fill="url(#bg)"/>
+  <rect width="600" height="900" rx="42" fill="url(#glow)"/>
+  <rect x="24" y="24" width="552" height="852" rx="34" stroke="#FFFFFF" stroke-opacity="0.16" stroke-width="3"/>
+
+  <g filter="url(#shadow)">
+    <circle cx="300" cy="340" r="116" fill="#0F0618" fill-opacity="0.72" stroke="#FFFFFF" stroke-opacity="0.14" stroke-width="3"/>
+    <path d="M258 272L392 340L258 408V272Z" fill="#F7ECFF"/>
+  </g>
+
+  <text x="300" y="535" text-anchor="middle" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="44" font-weight="800" letter-spacing="1">NO POSTER</text>
+  <text x="300" y="596" text-anchor="middle" fill="#CDBBE2" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="600">CineMate</text>
+
+  <g opacity="0.8">
+    <circle cx="206" cy="690" r="8" fill="#FFEB6E"/>
+    <circle cx="253" cy="690" r="8" fill="#FFEB6E"/>
+    <circle cx="300" cy="690" r="8" fill="#FFEB6E"/>
+    <circle cx="347" cy="690" r="8" fill="#FFEB6E"/>
+    <circle cx="394" cy="690" r="8" fill="#8F7FA0"/>
+  </g>
+</svg>
