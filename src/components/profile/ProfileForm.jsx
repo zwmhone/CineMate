@@ -2,6 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { getLooseEmailError, normaliseEmail } from "@/utils/emailValidation";
+import {
+  SECURITY_QUESTIONS,
+  getSecurityQuestionByKey,
+  isValidSecurityQuestionKey,
+} from "@/constants/securityQuestions";
 
 const MAX_IMAGE_SIZE = 420;
 
@@ -90,6 +95,28 @@ function clearRecoveryMode() {
   window.sessionStorage.removeItem(PASSWORD_RECOVERY_FLAG);
 }
 
+async function hashRecoveryAnswer(answer = "", questionKey = "") {
+  const cleanAnswer = String(answer || "")
+    .trim()
+    .toLowerCase();
+  const cleanQuestionKey = String(questionKey || "").trim();
+  if (!cleanAnswer) return "";
+
+  const hashInput = cleanQuestionKey
+    ? `${cleanQuestionKey}:${cleanAnswer}`
+    : cleanAnswer;
+
+  const encoder = new TextEncoder();
+  const buffer = await window.crypto.subtle.digest(
+    "SHA-256",
+    encoder.encode(hashInput),
+  );
+
+  return Array.from(new Uint8Array(buffer))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 function PasswordField({
   id,
   label,
@@ -128,6 +155,55 @@ function PasswordField({
   );
 }
 
+function SecurityQuestionPicker({ value, onChange, disabled }) {
+  const [open, setOpen] = useState(false);
+  const selectedQuestion = getSecurityQuestionByKey(value);
+
+  function chooseQuestion(questionKey) {
+    onChange(questionKey);
+    setOpen(false);
+  }
+
+  return (
+    <div className="profile-question-picker">
+      <button
+        type="button"
+        className={`profile-question-trigger ${open ? "open" : ""}`.trim()}
+        onClick={() => !disabled && setOpen((current) => !current)}
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        <span>{selectedQuestion.label}</span>
+        <span className="profile-question-arrow" aria-hidden="true">
+          ▾
+        </span>
+      </button>
+
+      {open ? (
+        <div className="profile-question-menu" role="listbox">
+          {SECURITY_QUESTIONS.map((question) => (
+            <button
+              key={question.key}
+              type="button"
+              role="option"
+              aria-selected={question.key === value}
+              className={
+                question.key === value
+                  ? "profile-question-option selected"
+                  : "profile-question-option"
+              }
+              onClick={() => chooseQuestion(question.key)}
+            >
+              {question.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function ProfileForm({
   profile,
   saving,
@@ -145,6 +221,13 @@ export default function ProfileForm({
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [recoveryAnswer, setRecoveryAnswer] = useState("");
+  const [securityQuestionKey, setSecurityQuestionKey] = useState(
+    SECURITY_QUESTIONS[0].key,
+  );
+  const [securityAnswer, setSecurityAnswer] = useState("");
+  const [securityConfirmAnswer, setSecurityConfirmAnswer] = useState("");
+  const [recoveryVerified, setRecoveryVerified] = useState(false);
   const [deleteText, setDeleteText] = useState("");
   const [localError, setLocalError] = useState("");
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
@@ -152,6 +235,17 @@ export default function ProfileForm({
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const hasPassword = profile?.hasPassword !== false;
+  const authProviders = Array.isArray(profile?.authProviders)
+    ? profile.authProviders
+    : [];
+  const hasGoogleProvider = authProviders.includes("google");
+  const recoveryQuestionReady = Boolean(profile?.recoveryQuestionReady);
+  const recoveryQuestionKey =
+    profile?.recoveryQuestionKey || SECURITY_QUESTIONS[0].key;
+  const recoveryQuestionItem = getSecurityQuestionByKey(recoveryQuestionKey);
+  const recoveryQuestion =
+    profile?.recoveryQuestion || recoveryQuestionItem.label;
+  const needsPasswordConfirmation = hasPassword;
   const passwordActionLabel = hasPassword ? "Change Password" : "Set Password";
   const isRecoveryMode = mode === "recoveryPassword";
 
@@ -164,6 +258,13 @@ export default function ProfileForm({
     setCurrentPassword("");
     setNewPassword("");
     setConfirmPassword("");
+    setRecoveryAnswer("");
+    setSecurityQuestionKey(
+      profile?.recoveryQuestionKey || SECURITY_QUESTIONS[0].key,
+    );
+    setSecurityAnswer("");
+    setSecurityConfirmAnswer("");
+    setRecoveryVerified(false);
     setDeleteText("");
     setLocalError("");
 
@@ -178,6 +279,7 @@ export default function ProfileForm({
     profile?.fullName,
     profile?.email,
     profile?.profileImage,
+    profile?.recoveryQuestionKey,
   ]);
 
   useEffect(() => {
@@ -214,6 +316,13 @@ export default function ProfileForm({
     setCurrentPassword("");
     setNewPassword("");
     setConfirmPassword("");
+    setRecoveryAnswer("");
+    setSecurityQuestionKey(
+      profile?.recoveryQuestionKey || SECURITY_QUESTIONS[0].key,
+    );
+    setSecurityAnswer("");
+    setSecurityConfirmAnswer("");
+    setRecoveryVerified(false);
     setDeleteText("");
     setShowCurrentPassword(false);
     setShowNewPassword(false);
@@ -283,14 +392,9 @@ export default function ProfileForm({
       return;
     }
 
-    if (!hasPassword) {
-      setLocalError(
-        "Set a CineMate password first, then use it to confirm future email changes.",
-      );
-      return;
-    }
+    const emailNeedsCurrentPassword = hasPassword;
 
-    if (!currentPassword) {
+    if (emailNeedsCurrentPassword && !currentPassword) {
       setLocalError("Please enter your current password to change your email.");
       return;
     }
@@ -301,7 +405,7 @@ export default function ProfileForm({
       profileImage: profile?.profileImage || null,
       currentPassword,
       newPassword: "",
-      requiresCurrentPassword: true,
+      requiresCurrentPassword: emailNeedsCurrentPassword,
       updateEmail: true,
     });
 
@@ -313,7 +417,15 @@ export default function ProfileForm({
     setLocalError("");
     onClearStatus?.();
 
-    const needsCurrentPassword = hasPassword && !isRecoveryMode;
+    if (isRecoveryMode && recoveryQuestionReady && !recoveryVerified) {
+      setLocalError(
+        "Please answer your security question before setting a new password.",
+      );
+      setMode("recoveryVerify");
+      return;
+    }
+
+    const needsCurrentPassword = needsPasswordConfirmation && !isRecoveryMode;
 
     if (needsCurrentPassword && !currentPassword) {
       setLocalError("Please enter your current password.");
@@ -358,7 +470,93 @@ export default function ProfileForm({
       return;
     }
 
-    await onResetPassword?.(cleanEmail);
+    if (!recoveryQuestionReady) {
+      setLocalError(
+        "Please set your security question first before using Forgot Password from profile.",
+      );
+      setMode("security");
+      return;
+    }
+
+    setRecoveryVerified(false);
+    setRecoveryAnswer("");
+    setMode("recoveryVerify");
+  }
+
+  async function saveSecurityQuestion(event) {
+    event.preventDefault();
+    setLocalError("");
+    onClearStatus?.();
+
+    const answer = securityAnswer.trim();
+    const confirmAnswer = securityConfirmAnswer.trim();
+
+    if (hasPassword && !currentPassword) {
+      setLocalError(
+        "Please enter your current password to update your security question.",
+      );
+      return;
+    }
+
+    if (!isValidSecurityQuestionKey(securityQuestionKey)) {
+      setLocalError("Please choose a valid security question.");
+      return;
+    }
+
+    if (answer.length < 2) {
+      setLocalError("Please enter your security answer.");
+      return;
+    }
+
+    if (answer.toLowerCase() !== confirmAnswer.toLowerCase()) {
+      setLocalError("Security answer and confirm answer do not match.");
+      return;
+    }
+
+    const answerHash = await hashRecoveryAnswer(answer, securityQuestionKey);
+    const result = await onSave?.({
+      fullName: profile?.fullName || fullName,
+      email: profile?.email || email,
+      profileImage: profile?.profileImage || null,
+      currentPassword,
+      newPassword: "",
+      requiresCurrentPassword: hasPassword,
+      updateEmail: false,
+      updateRecoveryQuestion: true,
+      recoveryQuestionKey: securityQuestionKey,
+      recoveryAnswerHash: answerHash,
+    });
+
+    if (result?.success) resetFormState("view");
+  }
+
+  async function verifyRecoveryAnswer(event) {
+    event.preventDefault();
+    setLocalError("");
+    onClearStatus?.();
+
+    const answerHash = await hashRecoveryAnswer(
+      recoveryAnswer,
+      recoveryQuestionKey,
+    );
+    const legacyAnswerHash = await hashRecoveryAnswer(recoveryAnswer);
+    if (
+      !answerHash ||
+      (answerHash !== profile?.recoveryAnswerHash &&
+        legacyAnswerHash !== profile?.recoveryAnswerHash)
+    ) {
+      setLocalError(
+        "Security answer is incorrect. Please check it and try again.",
+      );
+      return;
+    }
+
+    activateRecoveryMode();
+    setRecoveryVerified(true);
+    setCurrentPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
+    setMode("recoveryPassword");
   }
 
   async function handleDeleteAccount(event) {
@@ -425,7 +623,7 @@ export default function ProfileForm({
           <div className="profile-account-row flat">
             <span>Email</span>
             <strong>{profile?.email || "Not set"}</strong>
-            <small>Used for login and password reset emails.</small>
+            <small>Used for login and account updates.</small>
           </div>
           <div className="profile-account-row flat">
             <span>Password</span>
@@ -433,9 +631,30 @@ export default function ProfileForm({
             <small>
               {hasPassword
                 ? "Change it securely using your current password."
-                : "Set a CineMate password for email login."}
+                : hasGoogleProvider
+                  ? "Google sign-in is active. You can set a CineMate password too."
+                  : "Set a CineMate password for email login."}
             </small>
           </div>
+          <div className="profile-account-row flat">
+            <span>Security question</span>
+            <strong>{recoveryQuestionReady ? "Set" : "Not set"}</strong>
+            <small>
+              {recoveryQuestionReady
+                ? "Security check is ready for Forgot Password."
+                : "Please add a security question before using Forgot Password."}
+            </small>
+          </div>
+
+          {!recoveryQuestionReady ? (
+            <div className="profile-security-reminder" role="note">
+              <strong>Please add security question</strong>
+              <span>
+                This protects the Forgot Password feature and must be set before
+                password recovery can be used from your profile.
+              </span>
+            </div>
+          ) : null}
 
           <div className="profile-action-grid modern">
             <ActionButton
@@ -450,9 +669,15 @@ export default function ProfileForm({
             <ActionButton onClick={() => resetFormState("password")}>
               {passwordActionLabel}
             </ActionButton>
-            <ActionButton disabled={saving} onClick={handleResetPassword}>
-              Forgot Password
-            </ActionButton>
+            {!recoveryQuestionReady ? (
+              <ActionButton onClick={() => resetFormState("security")}>
+                Security Question
+              </ActionButton>
+            ) : (
+              <ActionButton disabled={saving} onClick={handleResetPassword}>
+                Forgot Password
+              </ActionButton>
+            )}
             <ActionButton
               className="logout"
               disabled={saving}
@@ -466,6 +691,18 @@ export default function ProfileForm({
             >
               Delete Account
             </ActionButton>
+          </div>
+
+          <div className="profile-account-links">
+            <button
+              type="button"
+              className="profile-account-text-link"
+              onClick={() => resetFormState("security")}
+            >
+              {recoveryQuestionReady
+                ? "Change security question"
+                : "Set security question"}
+            </button>
           </div>
         </div>
       ) : null}
@@ -554,7 +791,8 @@ export default function ProfileForm({
             <div>
               <h3>Change Email</h3>
               <p>
-                Enter a new email and confirm it with your current password.
+                Enter a new email. If this account already has a CineMate
+                password, confirm it with your current password.
               </p>
             </div>
             <button
@@ -568,8 +806,8 @@ export default function ProfileForm({
 
           {!hasPassword ? (
             <p className="profile-warning">
-              This account was created with Google. Set a CineMate password
-              first, then use it to confirm email changes.
+              This account does not have a CineMate password yet, so your active
+              logged-in session will be used to confirm this email change.
             </p>
           ) : null}
 
@@ -601,12 +839,145 @@ export default function ProfileForm({
               {localError}
             </p>
           ) : null}
-          <button
-            type="submit"
-            className="profile-save-main"
-            disabled={saving || !hasPassword}
-          >
+          <button type="submit" className="profile-save-main" disabled={saving}>
             {saving ? "Saving..." : "Save Email"}
+          </button>
+        </form>
+      ) : null}
+
+      {mode === "security" ? (
+        <form
+          className="profile-edit-panel clean"
+          onSubmit={saveSecurityQuestion}
+        >
+          <div className="profile-mode-header">
+            <div>
+              <h3>
+                {recoveryQuestionReady
+                  ? "Change Security Question"
+                  : "Set Security Question"}
+              </h3>
+              <p>
+                Choose a question and answer that only you can remember. This
+                protects the Forgot Password feature inside your profile.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="profile-soft-btn small"
+              onClick={() => resetFormState("view")}
+            >
+              Cancel
+            </button>
+          </div>
+
+          {hasPassword ? (
+            <PasswordField
+              id="profile-security-current-password"
+              label="Current password"
+              value={currentPassword}
+              onChange={(event) => setCurrentPassword(event.target.value)}
+              placeholder="Required to update security question"
+              autoComplete="current-password"
+              visible={showCurrentPassword}
+              onToggle={() => setShowCurrentPassword((value) => !value)}
+            />
+          ) : null}
+
+          <label htmlFor="profile-security-question">Question</label>
+          <SecurityQuestionPicker
+            value={securityQuestionKey}
+            onChange={setSecurityQuestionKey}
+            disabled={saving}
+          />
+
+          <PasswordField
+            id="profile-security-answer"
+            label="Answer"
+            value={securityAnswer}
+            onChange={(event) => setSecurityAnswer(event.target.value)}
+            placeholder={
+              getSecurityQuestionByKey(securityQuestionKey).placeholder
+            }
+            autoComplete="off"
+            visible={showNewPassword}
+            onToggle={() => setShowNewPassword((value) => !value)}
+          />
+
+          <PasswordField
+            id="profile-security-answer-confirm"
+            label="Confirm answer"
+            value={securityConfirmAnswer}
+            onChange={(event) => setSecurityConfirmAnswer(event.target.value)}
+            placeholder="Repeat your answer"
+            autoComplete="off"
+            visible={showConfirmPassword}
+            onToggle={() => setShowConfirmPassword((value) => !value)}
+          />
+
+          {localError ? (
+            <p className="profile-error inline" role="alert">
+              {localError}
+            </p>
+          ) : null}
+          <button type="submit" className="profile-save-main" disabled={saving}>
+            {saving
+              ? "Saving..."
+              : recoveryQuestionReady
+                ? "Update Security Question"
+                : "Save Security Question"}
+          </button>
+        </form>
+      ) : null}
+
+      {mode === "recoveryVerify" ? (
+        <form
+          className="profile-edit-panel clean"
+          onSubmit={verifyRecoveryAnswer}
+        >
+          <div className="profile-mode-header">
+            <div>
+              <h3>Security Check</h3>
+              <p>
+                Answer your security question before setting a new password.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="profile-soft-btn small"
+              onClick={() => resetFormState("view")}
+            >
+              Cancel
+            </button>
+          </div>
+
+          <label htmlFor="profile-recovery-question">Question</label>
+          <input
+            id="profile-recovery-question"
+            type="text"
+            value={recoveryQuestion}
+            disabled
+            readOnly
+          />
+
+          <PasswordField
+            id="profile-recovery-answer"
+            label="Answer"
+            value={recoveryAnswer}
+            onChange={(event) => setRecoveryAnswer(event.target.value)}
+            placeholder={recoveryQuestionItem.placeholder}
+            autoComplete="off"
+            visible={showCurrentPassword}
+            onToggle={() => setShowCurrentPassword((value) => !value)}
+          />
+
+          {localError ? (
+            <p className="profile-error inline" role="alert">
+              {localError}
+            </p>
+          ) : null}
+          <button type="submit" className="profile-save-main" disabled={saving}>
+            Continue
           </button>
         </form>
       ) : null}
@@ -620,7 +991,7 @@ export default function ProfileForm({
               </h3>
               <p>
                 {isRecoveryMode
-                  ? "Choose a new password for your CineMate account."
+                  ? "Security question verified. Choose a new password for your CineMate account."
                   : hasPassword
                     ? "Confirm your current password, then choose a new password."
                     : "Create a password so you can also sign in with email and password."}
@@ -635,7 +1006,7 @@ export default function ProfileForm({
             </button>
           </div>
 
-          {hasPassword && !isRecoveryMode ? (
+          {needsPasswordConfirmation && !isRecoveryMode ? (
             <PasswordField
               id="profile-current-password"
               label="Current password"
@@ -646,6 +1017,13 @@ export default function ProfileForm({
               visible={showCurrentPassword}
               onToggle={() => setShowCurrentPassword((value) => !value)}
             />
+          ) : null}
+
+          {hasGoogleProvider && !hasPassword && !isRecoveryMode ? (
+            <p className="profile-warning">
+              This account uses Google sign-in. You can set a CineMate password
+              here if you also want email/password login.
+            </p>
           ) : null}
 
           <PasswordField
@@ -670,14 +1048,14 @@ export default function ProfileForm({
             onToggle={() => setShowConfirmPassword((value) => !value)}
           />
 
-          {!isRecoveryMode ? (
+          {!isRecoveryMode && recoveryQuestionReady ? (
             <button
               type="button"
               className="profile-reset-link inline"
               disabled={saving}
               onClick={handleResetPassword}
             >
-              Forgot password? Send reset email
+              Forgot password? Answer your security question
             </button>
           ) : null}
 

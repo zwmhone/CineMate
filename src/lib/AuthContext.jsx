@@ -226,7 +226,20 @@ export function AuthProvider({ children }) {
         }
       }
 
-      const formatted = await formatUserWithProfile(nextSession?.user);
+      let activeSession = nextSession || null;
+
+      // Some account updates can emit USER_UPDATED before the browser session has
+      // fully refreshed. Do not treat that temporary empty event as a logout.
+      if (event === "USER_UPDATED" && !activeSession?.user) {
+        const { data: currentSessionData } = await supabase.auth.getSession();
+        activeSession = currentSessionData?.session || null;
+        if (!activeSession?.user) {
+          setReady(true);
+          return;
+        }
+      }
+
+      const formatted = await formatUserWithProfile(activeSession?.user);
       if (formatted?.isBanned) {
         notifyBannedUser(formatted.banReason);
         await clearBrokenLocalSession();
@@ -236,7 +249,7 @@ export function AuthProvider({ children }) {
         return;
       }
 
-      setSession(nextSession || null);
+      setSession(activeSession || null);
       setUser(formatted);
       setReady(true);
 
@@ -244,12 +257,12 @@ export function AuthProvider({ children }) {
         (event === "SIGNED_IN" ||
           event === "USER_UPDATED" ||
           event === "PASSWORD_RECOVERY") &&
-        nextSession?.user
+        activeSession?.user
       ) {
         await createProfileIfPossible(
-          nextSession.user,
-          nextSession.user.user_metadata?.full_name ||
-            nextSession.user.user_metadata?.name,
+          activeSession.user,
+          activeSession.user.user_metadata?.full_name ||
+            activeSession.user.user_metadata?.name,
         );
       }
     });
