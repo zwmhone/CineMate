@@ -60,6 +60,7 @@ NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 NEXT_PUBLIC_TMDB_API_KEY=your_tmdb_api_key
 NEXT_PUBLIC_TMDB_IMAGE_BASE_URL=https://image.tmdb.org/t/p
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 ```
 
 Do not commit `.env.local` to GitHub.
